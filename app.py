@@ -1,8 +1,13 @@
 import streamlit as st
+st.set_page_config(page_title="Crypto Bullish Dashboard", layout="wide")
+
 import requests
 import pandas as pd
+import datetime
 import matplotlib.pyplot as plt
+import time
 
+# ===== CONFIGURABLE =====
 RSI_PERIOD = 14
 EMA_SHORT = 9
 EMA_LONG = 21
@@ -10,9 +15,11 @@ VS_CURRENCY = 'usd'
 DAYS = 2
 TOP_N = 20
 
-TELEGRAM_BOT_TOKEN = st.sidebar.text_input("8070840473:AAFWU2fhpc_kBAPg--cep7pljMiPehjzy4M")
-TELEGRAM_CHAT_ID = st.sidebar.text_input("6528599397")
+# Telegram Bot Config
+TELEGRAM_TOKEN = '8070840473:AAFWU2fhpc_kBAPg--cep7pljMiPehjzy4M'
+TELEGRAM_CHAT_ID = '6528599397'
 
+# ===== FUNCTIONS =====
 def get_coin_ohlc(coin_id, days=DAYS):
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
     params = {'vs_currency': VS_CURRENCY, 'days': days}
@@ -61,7 +68,8 @@ def analyze_coin(coin_id):
     data = get_coin_ohlc(coin_id)
     if not data or len(data) < RSI_PERIOD:
         return None
-    closes = [item[4] for item in data]
+    df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close'])
+    closes = df['close'].tolist()
     rsi = calculate_rsi(closes)
     ema_short = calculate_ema(closes, EMA_SHORT)
     ema_long = calculate_ema(closes, EMA_LONG)
@@ -83,27 +91,22 @@ def analyze_coin(coin_id):
         'score': score
     }
 
-def send_telegram_message(token, chat_id, message):
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {'chat_id': chat_id, 'text': message, 'parse_mode': 'Markdown'}
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': message,
+        'parse_mode': 'HTML'
+    }
     try:
-        r = requests.post(url, data=payload, timeout=10)
-        return r.status_code == 200
+        requests.post(url, data=data)
     except:
-        return False
+        pass
 
-st.set_page_config(page_title="Crypto Bullish Dashboard", layout="wide")
-st.title("📈 Crypto Bullish Dashboard with RSI & EMA + Telegram Notif")
+send_telegram_message("✅ Bot Streamlit berhasil dijalankan.")
 
-# Kirim notifikasi bot berhasil terhubung sekali per sesi
-if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-    if 'bot_connected' not in st.session_state:
-        msg = "✅ Bot Telegram berhasil terhubung dan siap mengirim notifikasi!"
-        if send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg):
-            st.session_state['bot_connected'] = True
-            st.success("Notifikasi koneksi bot Telegram terkirim.")
-        else:
-            st.error("Gagal mengirim notifikasi koneksi bot Telegram.")
+# ===== STREAMLIT APP =====
+st.title("📈 Crypto Bullish Dashboard with RSI & EMA")
 
 coins = get_top_coins(TOP_N)
 coin_options = [coin['id'] for coin in coins]
@@ -169,32 +172,11 @@ for coin in coins:
 if bullish_results:
     df_bullish = pd.DataFrame(bullish_results)
     st.dataframe(df_bullish[['coin_id', 'price', 'rsi', 'ema_short', 'ema_long', 'score']].sort_values(by='score', ascending=False).reset_index(drop=True))
+
+    top_3 = df_bullish.sort_values(by='score', ascending=False).head(3)
+    message = "🚀 <b>Top 3 Coin dengan Sinyal Bullish</b>\n"
+    for idx, row in top_3.iterrows():
+        message += f"\n• <b>{row['coin_id'].upper()}</b> | 💵 ${row['price']:.4f} | RSI: {row['rsi']:.2f}"
+    send_telegram_message(message)
 else:
     st.info("Tidak ada coin dengan sinyal bullish maksimal saat ini.")
-
-if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and bullish_results:
-    if 'notified_coins' not in st.session_state:
-        st.session_state['notified_coins'] = set()
-
-    new_coins = [c for c in bullish_results if c['coin_id'] not in st.session_state['notified_coins']]
-
-    for coin in new_coins:
-        message = (
-            f"🚀 *Bullish Alert!*\n"
-            f"Coin: *{coin['coin_id'].upper()}*\n"
-            f"Harga: ${coin['price']:.4f}\n"
-            f"RSI: {coin['rsi']:.2f}\n"
-            f"EMA9: {coin['ema_short']:.4f}\n"
-            f"EMA21: {coin['ema_long']:.4f}\n"
-            f"Skor Bullish: {coin['score']}/3\n"
-            f"\nPantau segera!"
-        )
-        success = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, message)
-        if success:
-            st.session_state['notified_coins'].add(coin['coin_id'])
-            st.success(f"Notifikasi Telegram terkirim untuk {coin['coin_id'].upper()}")
-        else:
-            st.error(f"Gagal mengirim notifikasi untuk {coin['coin_id'].upper()}")
-else:
-    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
-        st.info("Masukkan Telegram Bot Token dan Chat ID di sidebar untuk notifikasi otomatis.")
